@@ -10,6 +10,8 @@ from src.fetch_games import DEFAULT_SEASON_TYPE, LAST_10_SEASONS, season_type_sl
 from src.ratings import add_pregame_rolling_ratings
 from src.rest_days import add_rest_days
 
+PLAYOFF_SEASON_TYPE = "Playoffs"
+
 PREGAME_RATING_COLS = [
     "pregame_off_rating",
     "pregame_def_rating",
@@ -112,11 +114,44 @@ def _to_game_level(team_games: pd.DataFrame, season: str) -> pd.DataFrame:
     return games[col_order].sort_values("GAME_DATE").reset_index(drop=True)
 
 
+def build_playoff_season_dataset(
+    season: str,
+    raw_dir: Path,
+) -> pd.DataFrame:
+    """
+    Build playoff games using regular-season history for pre-game features.
+
+    Playoff game 1 still needs a team's regular-season stats for ratings/rest.
+    """
+    reg_games_path, reg_ratings_path = _raw_paths(raw_dir, season, DEFAULT_SEASON_TYPE)
+    po_games_path, po_ratings_path = _raw_paths(raw_dir, season, PLAYOFF_SEASON_TYPE)
+
+    for path in (reg_games_path, reg_ratings_path, po_games_path, po_ratings_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Missing file: {path}")
+
+    reg_games = pd.read_csv(reg_games_path)
+    po_games = pd.read_csv(po_games_path)
+    reg_ratings = pd.read_csv(reg_ratings_path)
+    po_ratings = pd.read_csv(po_ratings_path)
+
+    all_games = pd.concat([reg_games, po_games], ignore_index=True)
+    all_ratings = pd.concat([reg_ratings, po_ratings], ignore_index=True)
+    enriched = _enrich_team_games(all_games, all_ratings)
+
+    playoff_game_ids = po_games["GAME_ID"].unique()
+    playoff_team_games = enriched[enriched["GAME_ID"].isin(playoff_game_ids)]
+    return _to_game_level(playoff_team_games, season)
+
+
 def build_season_dataset(
     season: str,
     raw_dir: Path,
     season_type: str = DEFAULT_SEASON_TYPE,
 ) -> pd.DataFrame:
+    if season_type == PLAYOFF_SEASON_TYPE:
+        return build_playoff_season_dataset(season, raw_dir)
+
     games_path, ratings_path = _raw_paths(raw_dir, season, season_type)
     if not games_path.exists():
         raise FileNotFoundError(f"Missing games file: {games_path}")
@@ -146,7 +181,9 @@ def save_dataset(df: pd.DataFrame, output_path: Path) -> Path:
 
 __all__ = [
     "LAST_10_SEASONS",
+    "PLAYOFF_SEASON_TYPE",
     "build_multi_season_dataset",
+    "build_playoff_season_dataset",
     "build_season_dataset",
     "save_dataset",
 ]
